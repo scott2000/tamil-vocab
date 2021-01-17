@@ -194,6 +194,14 @@ def find_starting_variations(word, prev_letter):
         elif first_letter in vallinam and to_soft[first_letter] == prev_letter:
             variations.append(['த'] + word[1:])
 
+    if first_letter in distance_prefixes and len(word) > 3:
+        if word[1] in consonants and word[2] == word[1]:
+            variations += find_starting_variations(word[2:], None)
+            if word[1] == 'வ' and word[3] in vowels:
+                variations += find_starting_variations(word[3:], None)
+        elif word[1] == 'வ' and word[2] == 'ய' and word[3] in vowels:
+            variations += find_starting_variations(word[2:], None)
+
     return variations
 
 def is_invalid_start_of_split(word):
@@ -217,8 +225,8 @@ def is_valid(word):
 def all_variations(word, prev_letter, next_letter):
     return [
         rejoin_tamil(starting)
-        for ending in find_ending_variations(word, next_letter)
-        for starting in find_starting_variations(ending, prev_letter)
+        for starting in find_starting_variations(word, prev_letter)
+        for ending in find_ending_variations(starting, next_letter)
         if is_valid(starting)
     ]
 
@@ -294,19 +302,7 @@ def split_word_reversed(word, prev_letter, next_letter):
 def split_word(word, prev_letter = None, next_letter = None):
     if prev_letter and prev_letter in consonants and prev_letter not in invalid_end:
         prev_letter = None
-    initial_entries = []
-    if len(word) > 3 and word[0] in distance_prefixes:
-        if word[1] == 'வ' and word[2] == 'வ' and word[3] in vowels:
-            initial_entries.append(Entry(word[:3]))
-            word = word[3:]
-        elif word[1] == 'வ' and word[2] == 'ய':
-            initial_entries.append(Entry(word[:2]))
-            word = word[2:]
-        elif word[1] in consonants and word[2] == word[1]:
-            initial_entries.append(Entry(word[:2]))
-            word = word[2:]
     _, _, entries = split_word_reversed(word, prev_letter, next_letter)
-    entries += initial_entries
     entries.reverse()
     return entries
 
