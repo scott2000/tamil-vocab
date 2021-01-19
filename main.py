@@ -69,6 +69,13 @@ def rejoin_tamil(phs):
             tamil.append(pulli)
     return ''.join(tamil).strip()
 
+def load_list(filename):
+    if not os.path.isfile(filename):
+        return None
+
+    with open(filename) as json_file:
+        return list(json.load(json_file))
+
 def load_set(filename):
     if not os.path.isfile(filename):
         return None
@@ -110,7 +117,6 @@ def is_in_dictionary(word):
     return word in fetched_words[first_letter]
 
 grammatical_suffixes = load_set('grammatical_suffixes.json')
-
 def is_grammatical_suffix(word):
     return word in grammatical_suffixes
 
@@ -150,8 +156,8 @@ def find_ending_variations(word, next_letter):
                 if last_letter == 'ட':
                     variations.append(word[:-1] + ['ள'])
                 elif last_letter == 'ற':
-                    variations.append(word[:-1] + ['ன'])
                     variations.append(word[:-1] + ['ல'])
+                    variations.append(word[:-1] + ['ன'])
                 if last_letter == next_letter:
                     variations += find_ending_variations(word[:-1], next_letter)
             elif last_letter == 'ண':
@@ -204,6 +210,75 @@ def find_starting_variations(word, prev_letter):
 
     return variations
 
+verb_endings = list(map(expand_tamil, load_list("verb_endings.json")))
+def find_potential_verb_roots(word):
+    if not word:
+        return []
+
+    verb_roots = []
+    for ending in verb_endings:
+        if len(word) <= len(ending) or word[-len(ending):] != ending:
+            continue
+
+        without_ending = word[:-len(ending)]
+        if len(without_ending) < 2:
+            continue
+
+        last_letter = without_ending[-1]
+        penult_letter = without_ending[-2]
+
+        if last_letter == 'த':
+            if penult_letter == 'ந' or penult_letter == 'த':
+                verb_roots.append(without_ending[:-2])
+            else:
+                verb_roots.append(without_ending[:-1])
+        elif last_letter == 'ன':
+            if penult_letter == 'இ':
+                verb_roots.append(without_ending[:-2] + ['உ'])
+            else:
+                verb_roots.append(without_ending[:-1])
+        elif last_letter == 'ப' and penult_letter == 'ப':
+            verb_roots.append(without_ending[:-2])
+        elif last_letter == 'வ' or last_letter == 'ப':
+            verb_roots.append(without_ending[:-1])
+        elif without_ending[-5:] == ['க', 'க', 'இ', 'ன', 'ற']:
+            verb_roots.append(without_ending[:-5])
+        elif without_ending[-4:] == ['க', 'க', 'இ', 'ற']:
+            verb_roots.append(without_ending[:-4])
+        elif without_ending[-4:] == ['க', 'இ', 'ன', 'ற']:
+            verb_roots.append(without_ending[:-4])
+        elif without_ending[-3:] == ['க', 'இ', 'ற']:
+            verb_roots.append(without_ending[:-3])
+        elif last_letter == 'ட':
+            if penult_letter == 'ட':
+                verb_roots.append(without_ending[:-1] + ['உ'])
+                verb_roots.append(without_ending[:-2] + ['ள'])
+            elif penult_letter == 'ண':
+                verb_roots.append(without_ending[:-2] + ['ள'])
+                verb_roots.append(without_ending[:-1])
+        elif last_letter == 'ற':
+            if penult_letter == 'ற':
+                verb_roots.append(without_ending[:-1] + ['உ'])
+                verb_roots.append(without_ending[:-2] + ['ல'])
+            elif penult_letter == 'ன':
+                verb_roots.append(without_ending[:-2] + ['ல'])
+                verb_roots.append(without_ending[:-1])
+        elif last_letter == 'க' and penult_letter == 'க':
+            verb_roots.append(without_ending[:-1] + ['உ'])
+
+    for i in range(len(verb_roots)):
+        root = verb_roots[i]
+        if not root:
+            continue
+
+        if root[-1] == 'ட':
+            verb_roots.append(root[:-1] + ['ள'])
+        elif root[-1] == 'ற':
+            verb_roots.append(root[:-1] + ['ல'])
+
+    verb_roots.append(word)
+    return verb_roots
+
 def is_invalid_start_of_split(word):
     if word and word[0] in consonants and (len(word) < 2 or word[1] in consonants):
         return True
@@ -224,87 +299,106 @@ def is_valid(word):
 
 def all_variations(word, prev_letter, next_letter):
     return [
-        rejoin_tamil(starting)
+        rejoin_tamil(with_verbs)
         for starting in find_starting_variations(word, prev_letter)
         for ending in find_ending_variations(starting, next_letter)
-        if is_valid(starting)
+        for with_verbs in find_potential_verb_roots(ending)
+        if is_valid(with_verbs)
     ]
 
 class Entry:
-    def __init__(self, raw, word = None, is_grammatical = False):
+    def __init__(self, raw, word=None, is_grammatical=False):
         self.raw = raw
         self.word = word
         self.is_grammatical = is_grammatical
 
-def split_word_reversed(word, prev_letter, next_letter):
-    # If the word is empty, there are no parts
-    if not word:
-        return 0, 0, []
+class WordSplitter:
+    def __init__(self, word):
+        self.word = word
+        self.cache = {}
 
-    # Default to returning the rest of the word raw if no match is found
-    best_index = 0
-    best_count = 1
-    best_entries = [Entry(word)]
+    def __split_from_index(self, start_index, prev_letter, next_letter):
+        # If the word is empty, there are no parts
+        word_part = self.word[start_index:]
+        if not word_part:
+            return 0, 0, []
 
-    # Try every possible prefix split, starting with the full word
-    for i in range(len(word), 0, -1):
-        # Make sure the rest of the word after the split is valid
-        after_split = word[i:]
-        if is_invalid_start_of_split(after_split):
-            continue
+        # Return the cached info for the suffix if it was already checked
+        if start_index in self.cache:
+            index, count, entries = self.cache[start_index]
+            return index, count, entries.copy()
 
-        # Find all possible variations of the prefix that could appear in the dictionary
-        before_split = word[:i]
-        variations = all_variations(before_split, prev_letter, after_split[0] if after_split else next_letter)
+        # Default to returning the rest of the word raw if no match is found
+        best_index = 0
+        best_count = 1
+        best_entries = [Entry(word_part)]
 
-        # Pick a prefix that was in the dictionary, if one exists
-        matching_prefix = next(filter(is_grammatical_suffix, variations), None)
-        is_grammatical = True
-
-        # Otherwise, pick a prefix that was in the dictionary, if one exists
-        if not matching_prefix:
-            is_grammatical = False
-            matching_prefix = next(filter(is_in_dictionary, variations), None)
-            if not matching_prefix:
+        # Try every possible prefix split, starting with the full word
+        for i in range(len(self.word), start_index, -1):
+            # Make sure the rest of the word after the split is valid
+            after_split = self.word[i:]
+            if is_invalid_start_of_split(after_split):
                 continue
 
-        # Try to split the rest of the word after this prefix
-        index, count, entries = split_word_reversed(after_split, before_split[-1], next_letter)
+            # Find all possible variations of the prefix that could appear in the dictionary
+            before_split = self.word[start_index:i]
+            variations = all_variations(before_split, prev_letter, after_split[0] if after_split else next_letter)
 
-        # If this is a less complete match, discard it
-        index += len(before_split)
-        if index < best_index:
-            continue
+            # Pick a prefix that was in the dictionary, if one exists
+            matching_prefix = next(filter(is_grammatical_suffix, variations), None) if start_index else None
+            is_grammatical = True
 
-        # Only increment the count if the suffix wasn't grammatical
-        if not is_grammatical:
-            count += 1
+            # Otherwise, pick a prefix that was in the dictionary, if one exists
+            if not matching_prefix:
+                is_grammatical = False
+                matching_prefix = next(filter(is_in_dictionary, variations), None)
+                if not matching_prefix:
+                    continue
 
-        # If this match requires more component words but is just as complete, discard it
-        if index == best_index and count >= best_count:
-            continue
+            # Try to split the rest of the word after this prefix
+            index, count, entries = self.__split_from_index(i, before_split[-1], next_letter)
 
-        # Add this word to the reversed list of word parts
-        entries.append(Entry(before_split, matching_prefix, is_grammatical))
+            # If this is a less complete match, discard it
+            index += len(before_split)
+            if index < best_index:
+                continue
 
-        # This is the best result so far, so record it
-        best_index = index
-        best_count = count
-        best_entries = entries
+            # Only increment the count if the suffix wasn't grammatical
+            if not is_grammatical:
+                count += 1
 
-        # If it was a complete match and the suffix is entirely grammatical, then it cannot be improved
-        if count == 0 and best_index == len(word):
-            break
+            # If this match requires more component words but is just as complete, discard it
+            if index == best_index and count >= best_count:
+                continue
 
-    # Return the best match that was found
-    return best_index, best_count, best_entries
+            # Add this word to the reversed list of word parts
+            entries.append(Entry(before_split, matching_prefix, is_grammatical))
 
-def split_word(word, prev_letter = None, next_letter = None):
+            # This is the best result so far, so record it
+            best_index = index
+            best_count = count
+            best_entries = entries
+
+            # If it was a complete match and the suffix is entirely grammatical, then it cannot be improved
+            if count == 0 and best_index == len(word_part):
+                break
+
+        # Store a copy of matching suffix in the cache
+        if start_index:
+            self.cache[start_index] = best_index, best_count, best_entries.copy()
+
+        # Return the best match that was found
+        return best_index, best_count, best_entries
+
+    def split(self, prev_letter, next_letter):
+        _, _, entries = self.__split_from_index(0, prev_letter, next_letter)
+        entries.reverse()
+        return entries
+
+def split_word(word, prev_letter=None, next_letter=None):
     if prev_letter and prev_letter in consonants and prev_letter not in invalid_end:
         prev_letter = None
-    _, _, entries = split_word_reversed(word, prev_letter, next_letter)
-    entries.reverse()
-    return entries
+    return WordSplitter(word).split(prev_letter, next_letter)
 
 while line := input():
     vocab_list = set()
