@@ -3,6 +3,7 @@ import os.path
 import urllib.request
 import urllib.parse
 import json
+import sys
 
 short_a = '\u0B85'
 independent_vowels = 'ஆஇஈஉஊஎஏஐஒஓஔ'
@@ -99,7 +100,7 @@ def fetch_with_prefix(prefix):
         fetched_words[prefix] = words
         return
 
-    print("Downloading list of '" + prefix + "' words...")
+    print("Downloading list of '" + prefix + "' words...", file=sys.stderr)
     address = fetch_string + urllib.parse.quote(prefix)
     with urllib.request.urlopen(address, timeout=10) as url:
         response = json.loads(url.read().split(b'\n')[1])
@@ -215,7 +216,7 @@ def find_starting_variations(word, prev_letter):
 
     return variations
 
-verb_endings = list(map(expand_tamil, load_list("verb_endings.json")))
+verb_endings = list(map(expand_tamil, load_list('verb_endings.json')))
 def find_potential_verb_roots(word):
     if not word:
         return []
@@ -404,6 +405,7 @@ class WordSplitter:
         entries.reverse()
         return entries
 
+def_url = 'https://dsal.uchicago.edu/cgi-bin/app/fabricius_query.py?searchhws=yes&matchtype=exact&qs='
 class Word:
     def __init__(self, word, suffix):
         self.word = expand_tamil(word)
@@ -419,6 +421,27 @@ class Word:
         if prev_letter and prev_letter not in invalid_end and prev_letter in consonants:
             prev_letter = None
         self.word_split = WordSplitter(self.word).split(prev_letter, next_letter)
+
+    def html(self):
+        generated_html = ''
+        dropped_letter = None
+        for i in range(len(self.word_split)):
+            entry = self.word_split[i]
+            current_word = entry.raw
+            if dropped_letter:
+                current_word = [dropped_letter] + current_word
+                dropped_letter = None
+            if current_word and i + 1 < len(self.word_split) and (next_word := self.word_split[i + 1].raw):
+                if next_word[0] in vowels:
+                    dropped_letter = current_word[-1]
+                    current_word = current_word[:-1]
+            if entry.word:
+                generated_html += '<a href="' + def_url + urllib.parse.quote(entry.word) + '" target="_blank">'
+            generated_html += rejoin_tamil(current_word)
+            if entry.word:
+                generated_html += '</a>'
+        generated_html += self.suffix
+        return generated_html
 
 def is_tamil(ch):
     return '\u0B80' <= ch <= '\u0BFF'
@@ -436,10 +459,10 @@ def parse_text(text):
                 word_str = ch
                 suffix_str = ''
                 is_word = True
-        elif is_word:
-            is_word = False
         else:
             suffix_str += ch
+            if is_word:
+                is_word = False
 
     if word_str or suffix_str:
         yield Word(word_str, suffix_str)
@@ -459,24 +482,18 @@ def split_words(words):
         yield prev_word
 
 if __name__ == '__main__':
+    print('<link rel="stylesheet" href="link_style.css">')
     vocab_list = set()
-    while line := input():
-        for word in split_words(parse_text(line)):
-            first = True
-            for entry in word.word_split:
-                if first:
-                    first = False
-                else:
-                    print(' + ', end='')
-
-                if not entry.word:
-                    print('(' + rejoin_tamil(entry.raw) + ')', end='')
-                    continue
-
-                print(entry.word, end='')
-                if not entry.is_grammatical:
-                    vocab_list.add(entry.word)
+    try:
+        while line := input():
+            for word in split_words(parse_text(line)):
+                print(word.html(), end='')
+                for entry in word.word_split:
+                    if entry.word and not entry.is_grammatical:
+                        vocab_list.add(entry.word)
             print()
+    except EOFError:
+        pass
 
-    print(vocab_list)
+    print(vocab_list, file=sys.stderr)
 
