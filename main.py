@@ -1,3 +1,4 @@
+import unicodedata
 import os.path
 import urllib.request
 import urllib.parse
@@ -39,7 +40,11 @@ invalid_start = 'ஙணழளறன'
 invalid_end = vallinam + 'ஙஞநவ'
 distance_prefixes = 'அஇஎ'
 
+def normalize(text):
+    return unicodedata.normalize('NFKC', text)
+
 def expand_tamil(tam):
+    tam = normalize(tam)
     phonemes = []
     for char in tam:
         if char == pulli:
@@ -99,7 +104,7 @@ def fetch_with_prefix(prefix):
     with urllib.request.urlopen(address, timeout=10) as url:
         response = json.loads(url.read().split(b'\n')[1])
 
-    words = set(map(lambda o: o['hw'], response))
+    words = set(map(lambda o: normalize(o['hw']), response))
     fetched_words[prefix] = words
 
     if not os.path.isdir('words'):
@@ -371,8 +376,12 @@ class WordSplitter:
             if index == best_index and count >= best_count:
                 continue
 
-            # Add this word to the reversed list of word parts
-            entries.append(Entry(before_split, matching_prefix, is_grammatical))
+            if entries and (last_entry := entries[-1]).is_grammatical:
+                # Merge with a following grammatical suffix if there is one
+                entries[-1] = Entry(before_split + last_entry.raw, matching_prefix, is_grammatical)
+            else:
+                # Otherwise, add this word to the reversed list of word parts
+                entries.append(Entry(before_split, matching_prefix, is_grammatical))
 
             # This is the best result so far, so record it
             best_index = index
@@ -395,34 +404,79 @@ class WordSplitter:
         entries.reverse()
         return entries
 
-def split_word(word, prev_letter=None, next_letter=None):
-    if prev_letter and prev_letter in consonants and prev_letter not in invalid_end:
-        prev_letter = None
-    return WordSplitter(word).split(prev_letter, next_letter)
+class Word:
+    def __init__(self, word, suffix):
+        self.word = expand_tamil(word)
+        self.suffix = suffix
 
-while line := input():
-    vocab_list = set()
-    words = list(map(expand_tamil, line.split()))
-    for i in range(len(words)):
-        prev_letter = None
-        next_letter = None
-        if i > 0:
-            prev_letter = words[i - 1][-1]
-        if i < len(words) - 1:
-            next_letter = words[i + 1][0]
-        first = True
-        for entry in split_word(words[i], prev_letter, next_letter):
-            if first:
-                first = False
+    def first_letter(self):
+        return self.word[0] if self.word else None
+
+    def last_letter(self):
+        return self.word[-1] if self.word else None
+
+    def split_word(self, prev_letter=None, next_letter=None):
+        if prev_letter and prev_letter not in invalid_end and prev_letter in consonants:
+            prev_letter = None
+        self.word_split = WordSplitter(self.word).split(prev_letter, next_letter)
+
+def is_tamil(ch):
+    return '\u0B80' <= ch <= '\u0BFF'
+
+def parse_text(text):
+    word_str = ''
+    suffix_str = ''
+    is_word = True
+    for i, ch in enumerate(text):
+        if is_tamil(ch):
+            if is_word:
+                word_str += ch
             else:
-                print(' + ', end='')
+                yield Word(word_str, suffix_str)
+                word_str = ch
+                suffix_str = ''
+                is_word = True
+        elif is_word:
+            is_word = False
+        else:
+            suffix_str += ch
 
-            if not entry.word:
-                print('(' + rejoin_tamil(entry.raw) + ')', end='')
-                continue
+    if word_str or suffix_str:
+        yield Word(word_str, suffix_str)
 
-            print(entry.word, end='')
-            if not entry.is_grammatical:
-                vocab_list.add(entry.word)
-        print()
+def split_words(words):
+    prev_prev_letter = None
+    prev_word = None
+    for word in words:
+        if prev_word:
+            prev_word.split_word(prev_prev_letter, word.first_letter())
+            prev_prev_letter = prev_word.last_letter()
+            yield prev_word
+        prev_word = word
+
+    if prev_word:
+        prev_word.split_word(prev_prev_letter)
+        yield prev_word
+
+if __name__ == '__main__':
+    vocab_list = set()
+    while line := input():
+        for word in split_words(parse_text(line)):
+            first = True
+            for entry in word.word_split:
+                if first:
+                    first = False
+                else:
+                    print(' + ', end='')
+
+                if not entry.word:
+                    print('(' + rejoin_tamil(entry.raw) + ')', end='')
+                    continue
+
+                print(entry.word, end='')
+                if not entry.is_grammatical:
+                    vocab_list.add(entry.word)
+            print()
+
     print(vocab_list)
+
