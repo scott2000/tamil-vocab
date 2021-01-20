@@ -96,7 +96,7 @@ def fetch_with_prefix(prefix):
         return
 
     filename = 'words/' + prefix + '.json'
-    if words := load_set(filename):
+    if (words := load_set(filename)) is not None:
         fetched_words[prefix] = words
         return
 
@@ -436,7 +436,7 @@ class Word:
                     dropped_letter = current_word[-1]
                     current_word = current_word[:-1]
             if entry.word:
-                generated_html += '<a href="' + def_url + urllib.parse.quote(entry.word) + '" target="_blank">'
+                generated_html += '<a href="' + def_url + urllib.parse.quote(entry.word) + '" target="_blank" rel="noopener noreferrer">'
             generated_html += rejoin_tamil(current_word)
             if entry.word:
                 generated_html += '</a>'
@@ -482,18 +482,23 @@ def split_words(words):
         yield prev_word
 
 if __name__ == '__main__':
-    print('<link rel="stylesheet" href="link_style.css">')
+    print('''<style>
+a:link { color: inherit; text-decoration: none; }
+a:visited { color: inherit; text-decoration: none; }
+a:hover { text-decoration: underline; }
+</style>''')
     vocab_list = set()
-    try:
-        while line := input():
-            for word in split_words(parse_text(line)):
-                print(word.html(), end='')
-                for entry in word.word_split:
-                    if entry.word and not entry.is_grammatical:
-                        vocab_list.add(entry.word)
-            print()
-    except EOFError:
-        pass
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        for word in split_words(parse_text(line)):
+            print(word.html(), end='')
+            for entry in word.word_split:
+                if entry.word and not entry.is_grammatical:
+                    vocab_list.add(entry.word)
+        print()
 
     print(vocab_list, file=sys.stderr)
 
